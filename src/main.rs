@@ -1,4 +1,4 @@
-use std::{time::Duration, error::Error};
+use std::{time::Duration, error::Error, thread};
 
 use opentelemetry::{trace::{TraceError, Tracer, TraceContextExt, FutureExt, SpanKind, Span, get_active_span}, sdk::{trace::Config, Resource}, KeyValue, global, Key, Context};
 fn init_tracer() -> Result<opentelemetry::sdk::trace::Tracer, TraceError> {
@@ -26,9 +26,28 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>>  {
     span.add_event("mainfun".to_string(), vec![]);
 
     let cx = Context::current_with_span(span);
-    test(&"v".to_string()).with_context(cx).await;
+    async{
+        let cx = Context::current();
+        let span = cx.span();
 
-    tokio::time::sleep(Duration::from_millis(150)).await;
+        span.add_event("in async".to_string(), vec![]);
+        test(&"v".to_string()).with_context(cx).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        
+        for i in 1..10{
+            let cx = Context::current();
+            let span = cx.span();
+
+        span.add_event(format!("in for loop #{i}").to_string(), vec![]);
+            test(&format!("{i}")).with_context(cx).await;
+        }
+    }
+    .with_context(cx.clone())
+    .await;
+    let span = cx.span();
+    span.add_event("outside async".to_string(), vec![]);
+    test(&"v".to_string()).with_context(cx).await;
+    // tokio::time::sleep(Duration::from_millis(150)).await;
     println!("Hello, world!");
     global::shutdown_tracer_provider();
     Ok(())
@@ -40,5 +59,7 @@ async fn test(v: &String,){
     let mut span = global::tracer("infunction").start("startfun");
     span.add_event(v.to_string(), vec![]);
     print!("{}",v);
-    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let mut k=false;
+    
+    // tokio::time::sleep(Duration::from_millis(1500)).await;
 }
