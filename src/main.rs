@@ -10,7 +10,7 @@ use fltk::{
    input::Input,
     prelude::*, frame::Frame,
 };
-use opentelemetry::{trace::{TraceError, Tracer, TraceContextExt, FutureExt, SpanKind, Span, get_active_span}, sdk::{trace::Config, Resource}, KeyValue, global, Key, Context};
+use opentelemetry::{trace::{TraceError, Tracer, TraceContextExt, FutureExt, SpanKind, Span, get_active_span}, sdk::{trace::Config, Resource, propagation::TraceContextPropagator}, KeyValue, global, Key, Context};
 fn init_tracer() -> Result<opentelemetry::sdk::trace::Tracer, TraceError> {
     opentelemetry_jaeger::new_pipeline()
         .with_service_name("trace-demo")
@@ -27,7 +27,8 @@ fn init_tracer() -> Result<opentelemetry::sdk::trace::Tracer, TraceError> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>>  {
-    let tracer = init_tracer()?;
+    init_tracer()?;
+    global::set_text_map_propagator(TraceContextPropagator::new());
     let mut WIDGET_WIDTH: i32 = 420;
     let mut WIDGET_HEIGHT: i32 = 400;
     let mut WIDGET_PADDING: i32 = 20;
@@ -36,7 +37,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>>  {
     //                 .span_builder("init")
     //                 .with_kind(SpanKind::Internal)
     //                 .start(&tracer);
-    let mut span = global::tracer("example-opentelemetry/mainfun").start("started");
+    let tracer=global::tracer("example-opentelemetry/mainfun");
+    let mut span =
+    tracer
+    .start("started");
     span.add_event("mainfun".to_string(), vec![]);
 
     let cx = Context::current_with_span(span);
@@ -65,12 +69,28 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>>  {
                 10,
                 40) ;
                 fltk::frame::Frame::default().with_size(20, 30);
+                let main_span_ref = global::tracer("main").start("Application Open");
+
             // let mut bframe1 = fltk::frame::Frame::default().with_size(300, 60);
             let mut b11 = Button::default().with_size(150,30);
             b11.set_label("All browsers");
             // b1.emit(s, "refresh".to_string());
             // let mut hpack=hpack.clone();
-            b11.emit(s.clone(),"all".to_string());
+            b11.set_callback(move |_| {
+                let cx = Context::current();
+                let tracer = global::tracer("example-opentelemetry/thread");
+                let mut span = tracer.start("thread_code");
+                // Create a span for the button click event
+                // let mut button_span = tracer
+                //     .start("clicked");
+        
+                // Emit a message to the FLTK channel
+                s.send("all");
+        
+                // End the button click span
+                span.end();
+            }).with_context(cx);
+            // b11.emit(s.clone(),"all".to_string());
             
 
             ttb.end();
@@ -85,49 +105,69 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>>  {
 
             win.end();
             win.show();
-            while app.wait() {
+            // get_active_span(|span|{
+                // let mut span=tracer.start("inat");
+                // // let span = cx.span();
+                // span.add_event("inat".to_string(), vec![]);
+                // let cx = Context::current_with_span(span);
+                while app.wait() {
+                let cx = Context::current();
                 // setframe(&mut frame, "");
                 // frame=frame.clone();
                 match r.recv() {
                     Some(val) => {
                         if(val == "all"){
+                            let cx = Context::current();
+                            let mut sp =
+                            // cx.span();
+                    //         tracer.span_builder("Button clicked")
+                    // .with_parent_context(cx.clone())
+                    // .start(&tracer);
                             // let cx = Context::current();
+                            // let mut sp=cx.span();
+                            // sp.add_event("button clicked".to_string(), vec![]);
+                            // let mut span = tracer.start("thread_code");
                             // let span = cx.span();
-                            let mut span = global::tracer("all").start("all");
-                            span.add_event("button clicked".to_string(), vec![]);
-                            fltk::app::quit()
+                            // let mut span = global::tracer("infunction").start("startfun");
+                            // span.add_event("button clicked".to_string(), vec![]);
+                            // let mut span = global::tracer("all").start("all");
+                            // span.add_event("button clicked".to_string(), vec![]);
+                            fltk::app::quit();
                         }
                     },
                     None=>{
                         
                     }
                 }
-            }.with_context(cx.clone());
+            }
+        //     }.with_context(cx.clone());
+        // });
 
-    async{
-        let cx = Context::current();
-        let span = cx.span();
+    // async{
+    //     let cx = Context::current();
+    //     let span = cx.span();
 
-        span.add_event("in async".to_string(), vec![]);
-        test(&"v".to_string()).with_context(cx).await;
-        tokio::time::sleep(Duration::from_millis(150)).await;
+    //     span.add_event("in async".to_string(), vec![]);
+    //     test(&"v".to_string()).with_context(cx).await;
+    //     tokio::time::sleep(Duration::from_millis(150)).await;
         
-        for i in 1..10{
-            let cx = Context::current();
-            let span = cx.span();
+    //     for i in 1..10{
+    //         let cx = Context::current();
+    //         let span = cx.span();
 
-        span.add_event(format!("in for loop #{i}").to_string(), vec![]);
-            test(&format!("{i}")).with_context(cx).await;
-        }
-    }
-    .with_context(cx.clone())
-    .await;
-    // let (s, r) = mpsc::channel();
-    let span = cx.span();
-    span.add_event("outside async".to_string(), vec![]);
-    test(&"v".to_string()).with_context(cx).await;
-    // tokio::time::sleep(Duration::from_millis(150)).await;
-    println!("Hello, world!");
+    //     span.add_event(format!("in for loop #{i}").to_string(), vec![]);
+    //         test(&format!("{i}")).with_context(cx).await;
+    //     }
+    // }
+    // .with_context(cx.clone())
+    // .await;
+    // // let (s, r) = mpsc::channel();
+    // let span = cx.span();
+    // span.add_event("outside async".to_string(), vec![]);
+    // test(&"v".to_string()).with_context(cx).await;
+    // // tokio::time::sleep(Duration::from_millis(150)).await;
+    // println!("Hello, world!");
+    // tracer.end();
     global::shutdown_tracer_provider();
     // process::exit(0);
     Ok(())
