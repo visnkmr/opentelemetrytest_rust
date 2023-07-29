@@ -1,16 +1,16 @@
 use std::{time::Duration, error::Error, thread, sync::mpsc};
-use fltk::{
-    enums::{Color, FrameType, Event, CallbackTrigger},
-    app::MouseButton,
-    app::{App,*},
-    prelude::{DisplayExt, GroupExt, WidgetBase, WidgetExt},
-    text::{TextBuffer, TextDisplay},
-    window::Window,
-    button::{Button,CheckButton},
-   input::Input,
-    prelude::*, frame::Frame,
-};
-use opentelemetry::{trace::{TraceError, Tracer, TraceContextExt, FutureExt, SpanKind, Span, get_active_span}, sdk::{trace::Config, Resource}, KeyValue, global, Key, Context};
+// use fltk::{
+//     enums::{Color, FrameType, Event, CallbackTrigger},
+//     app::MouseButton,
+//     app::{App,*},
+//     prelude::{DisplayExt, GroupExt, WidgetBase, WidgetExt},
+//     text::{TextBuffer, TextDisplay},
+//     window::Window,
+//     button::{Button,CheckButton},
+//    input::Input,
+//     prelude::*, frame::Frame,
+// };
+use opentelemetry::{trace::{TraceError, Tracer, TraceContextExt, FutureExt, SpanKind, Span, get_active_span}, sdk::{trace::Config, Resource, propagation::TraceContextPropagator}, KeyValue, global, Key, Context};
 fn init_tracer() -> Result<opentelemetry::sdk::trace::Tracer, TraceError> {
     opentelemetry_jaeger::new_pipeline()
         .with_service_name("trace-demo")
@@ -28,10 +28,9 @@ fn init_tracer() -> Result<opentelemetry::sdk::trace::Tracer, TraceError> {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>>  {
     init_tracer()?;
+    global::set_text_map_propagator(TraceContextPropagator::new());
+
     let tracer = global::tracer("example-opentelemetry/mainfun");
-    let mut WIDGET_WIDTH: i32 = 420;
-    let mut WIDGET_HEIGHT: i32 = 400;
-    let mut WIDGET_PADDING: i32 = 20;
 
     // let mut span=tracer
     //                 .span_builder("init")
@@ -40,31 +39,50 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>>  {
     let mut span = tracer.start("started");
     span.add_event("mainfun".to_string(), vec![]);
 
-    let cx = Context::current_with_span(span);
-
-    thread::spawn(||async{
-        let cx = Context::current();
-        // let span = cx.span();
-        let mut span = global::tracer("infunction").start("startfun");
-        span.add_event("in async".to_string(), vec![]);
-        test(&"v".to_string()).with_context(cx).await;
-        tokio::time::sleep(Duration::from_millis(150)).await;
-        
-        for i in 1..10{
+    let cxm = Context::current_with_span(span);
+tracer.in_span("async_thread", |cx| async{
+        let span = cx.span();
+        span.add_event("inat".to_string(), vec![]);
+        // Spawn an async task and execute it
+        tokio::spawn(tokio::spawn(async move{
             let cx = Context::current();
-            let span = cx.span();
-
-        span.add_event(format!("in for loop #{i}").to_string(), vec![]);
-            test(&format!("{i}")).with_context(cx).await;
-        }
-    }
+            let tracer = global::tracer("example-opentelemetry/thread");
+            let mut span = tracer.start("thread_code");
+            // let span = cx.span();
+            // let mut span = global::tracer("infunction").start("startfun");
+            span.add_event("in async".to_string(), vec![]);
+            test(&"v".to_string()).with_context(cx).await;
+            tokio::time::sleep(Duration::from_millis(150));
+            
+            for i in 1..10{
+                let tracer = global::tracer("example-opentelemetry/infor");
+            let mut span = tracer.start("forcode");
+                let cx = Context::current();
+                let span = cx.span();
     
-    // .await
-).join().with_context(cx.clone());
+            span.add_event(format!("in for loop #{i}").to_string(), vec![]);
+                test(&format!("{i}")).with_context(cx).await;
+            }
+            span.end()
+        }
+        .with_context(cx)
+        
+        // .await
+    ))
+    .with_context(cxm.clone())
+    .await
+        
+        // Continue with the rest of your main function
+        // ...
+    })
+    .with_context(cxm.clone())
+    .await;
+  
     // let (s, r) = mpsc::channel();
-    let span = cx.span();
+    let span = cxm.span();
     span.add_event("outside async".to_string(), vec![]);
-    test(&"v".to_string()).with_context(cx).await;
+    // let cxm = Context::current_with_span(span);
+    test(&"v".to_string()).with_context(cxm).await;
     // tokio::time::sleep(Duration::from_millis(150)).await;
     println!("Hello, world!");
     global::shutdown_tracer_provider();
